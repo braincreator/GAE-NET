@@ -4,12 +4,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using Google.Apis.Datastore.v1beta2.Data;
-using GoogleAppEngine.Shared;
+using System.Threading;
+using System.Threading.Tasks;
+
 
 namespace GoogleAppEngine.Datastore.LINQ
 {
-    public class DatastoreQueryable<T> : IOrderedQueryable<T>
+    public class DatastoreQueryable<T> : IOrderedQueryable<T>, IOrderedAsyncQueryable<T>
     {
         private DatastoreProvider _provider;
         private Expression _expression;
@@ -26,26 +27,19 @@ namespace GoogleAppEngine.Datastore.LINQ
         public DatastoreQueryable(DatastoreProvider provider, Expression expression)
             : this(provider)
         {
-            if (!typeof(IQueryable<T>).GetTypeInfo().IsAssignableFrom(expression.Type.GetTypeInfo()))
+            if (!typeof(IQueryable<T>).GetTypeInfo().IsAssignableFrom(expression.Type.GetTypeInfo()) && !typeof(IAsyncQueryable<T>).GetTypeInfo().IsAssignableFrom(expression.Type.GetTypeInfo()))
                 throw new ArgumentOutOfRangeException(nameof(expression));
 
             this._expression = expression;
         }
 
-        Expression IQueryable.Expression
-        {
-            get { return this._expression; }
-        }
+        public Type ElementType => typeof (T);
+        public Expression Expression => this._expression;
+        public IAsyncQueryProvider Provider => _provider;
 
-        Type IQueryable.ElementType
-        {
-            get { return typeof(T); }
-        }
-
-        IQueryProvider IQueryable.Provider
-        {
-            get { return this._provider; }
-        }
+        Expression IQueryable.Expression => this._expression;
+        Type IQueryable.ElementType => typeof(T);
+        IQueryProvider IQueryable.Provider => this._provider;
 
         private object GetExecuteResult()
         {
@@ -55,20 +49,25 @@ namespace GoogleAppEngine.Datastore.LINQ
             return res;
         }
 
-        public IEnumerator<T> GetEnumerator()
+        private async Task<object> GetExecuteResultAsync()
         {
-            
-            return ((IEnumerable<T>)GetExecuteResult()).GetEnumerator();
+            var res = await _provider.ExecuteAsync<object>(_expression, default(CancellationToken)).ConfigureAwait(false);
+            if (res == null)
+                throw new NullReferenceException("Cannot enumerate over a null result.");
+            return res;
         }
 
-        IEnumerator IEnumerable.GetEnumerator()
-        {
-            return ((IEnumerable)GetExecuteResult()).GetEnumerator();
-        }
+        //public async Task<IEnumerator<T>> GetEnumeratorAsync() => ((IEnumerable<T>) await GetExecuteResultAsync().ConfigureAwait(false)).GetEnumerator();
+        
+        public IEnumerator<T> GetEnumerator() => ((IEnumerable<T>)GetExecuteResult()).GetEnumerator();
 
-        public override string ToString()
-        {
-            return this._provider.GetQueryText(this._expression);
-        }
+        IEnumerator IEnumerable.GetEnumerator() => ((IEnumerable)GetExecuteResult()).GetEnumerator();
+
+        public override string ToString() => this._provider.GetQueryText(this._expression);
+
+        IAsyncEnumerator<T> IAsyncEnumerable<T>.GetEnumerator() => ((IAsyncEnumerable<T>) GetExecuteResultAsync()).GetEnumerator();
+
+        public IAsyncEnumerator<T> GetEnumeratorAsync() => ((IAsyncEnumerable<T>)GetExecuteResultAsync()).GetEnumerator();
+
     }
 }

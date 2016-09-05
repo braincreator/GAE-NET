@@ -3,9 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using System.Linq.Expressions;
 using System.Reflection;
-using Google.Apis.Datastore.v1beta2.Data;
+using Google.Apis.Datastore.v1beta3.Data;
 using GoogleAppEngine.Datastore.LINQ;
 using GoogleAppEngine.Shared;
 
@@ -17,15 +16,15 @@ namespace GoogleAppEngine.Datastore.Serialization
         private bool IsKeyUsed(CloudAuthenticator authenticator, string key)
         {
             // TODO consider using AllocateIds()
-            var result = new Google.Apis.Datastore.v1beta2.DatastoreService(authenticator.GetInitializer()).Datasets.Lookup(new LookupRequest
+            var result = new Google.Apis.Datastore.v1beta3.DatastoreService(authenticator.GetInitializer()).Projects.Lookup(new LookupRequest
             {
                 Keys = new List<Key>
                 {
                     new Key
                     {
-                        Path = new List<KeyPathElement>
+                        Path = new List<PathElement>
                         {
-                            new KeyPathElement
+                            new PathElement
                             {
                                 Name = key,
                                 Kind = typeof(T).Name
@@ -94,9 +93,9 @@ namespace GoogleAppEngine.Datastore.Serialization
                     throw new NullReferenceException("Serialized entity is null");
 
                 if (datastoreEntity?.Key?.Path == null)
-                    datastoreEntity.Key = new Key { Path = new List<KeyPathElement>() };
+                    datastoreEntity.Key = new Key { Path = new List<PathElement>() };
 
-                datastoreEntity.Key.Path.Add(new KeyPathElement
+                datastoreEntity.Key.Path.Add(new PathElement
                 {
                     Kind = typeof(T).GetTypeInfo().Name,
                     Name = key
@@ -108,32 +107,32 @@ namespace GoogleAppEngine.Datastore.Serialization
             return datastoreEntities;
         }
 
-        private Property SerializeProperty(Type propType, object val, bool isIndexed)
+        private Value SerializeProperty(Type propType, object val, bool isExcludedFromIndex)
         {
             if (propType == typeof(string))
-                return new Property { StringValue = (string)val ?? "", Indexed = isIndexed }; // string cannot be null in datastore
+                return new Value { StringValue = (string)val ?? "", ExcludeFromIndexes = isExcludedFromIndex }; // string cannot be null in datastore
             else if (propType == typeof(int) || propType == typeof(long) || propType == typeof(short))
-                return new Property { IntegerValue = Convert.ToInt64(val), Indexed = isIndexed };
+                return new Value { IntegerValue = Convert.ToInt64(val), ExcludeFromIndexes = isExcludedFromIndex };
             else if (propType == typeof(double))
-                return new Property { DoubleValue = (double)val, Indexed = isIndexed };
+                return new Value { DoubleValue = (double)val, ExcludeFromIndexes = isExcludedFromIndex };
             else if (propType == typeof(decimal))
-                return new Property { StringValue = Convert.ToString((decimal)val, CultureInfo.InvariantCulture), Indexed = false };
+                return new Value { StringValue = Convert.ToString((decimal)val, CultureInfo.InvariantCulture), ExcludeFromIndexes = false };
             else if (propType == typeof(bool))
-                return new Property { BooleanValue = (bool)val, Indexed = isIndexed };
+                return new Value { BooleanValue = (bool)val, ExcludeFromIndexes = isExcludedFromIndex };
             else if (propType == typeof(DateTime))
-                return new Property { DateTimeValue = (DateTime)val, Indexed = isIndexed };
+                return new Value { TimestampValue = (DateTime)val, ExcludeFromIndexes = isExcludedFromIndex };
             else if (propType == typeof(byte[]))
-                return new Property { BlobValue = val == null ? null : Convert.ToBase64String((byte[])val), Indexed = isIndexed };
+                return new Value { BlobValue = val == null ? null : Convert.ToBase64String((byte[])val), ExcludeFromIndexes = isExcludedFromIndex };
             else if (propType.GetTypeInfo().IsEnum)
             {
                 var underlyingType = Enum.GetUnderlyingType(propType);
                 if (underlyingType == typeof(int) || underlyingType == typeof(long) || underlyingType == typeof(uint) || underlyingType == typeof(ushort))
-                    return new Property { IntegerValue = Convert.ToInt64(val), Indexed = isIndexed };
+                    return new Value { IntegerValue = Convert.ToInt64(val), ExcludeFromIndexes = isExcludedFromIndex };
                 else
                     throw new NotSupportedException("The underlying enumerator type is not supported.");
             }
             else if (propType.GetTypeInfo().IsClass)
-                return new Property { EntityValue = val != null ? SerializeEntity(val, propType) : null, Indexed = isIndexed };
+                return new Value { EntityValue = val != null ? SerializeEntity(val, propType) : null, ExcludeFromIndexes = isExcludedFromIndex };
             else
                 throw new NotSupportedException("Serialization of this object is not supported.");
         }
@@ -147,78 +146,84 @@ namespace GoogleAppEngine.Datastore.Serialization
             var attributes = propInfo.GetCustomAttributes(typeof (DatastoreNotIndexedAttribute), false);
             return !attributes.Any();
         }
-
-        private Property SerializeProperty(Type parentType, Type propType, object val)
+        private bool IsPropertyExcludedFromIndex(Type parentType, string propertyName)
         {
-            var isIndexed = IsPropertyIndexed(parentType, propType.Name);
-            return SerializeProperty(propType, val, isIndexed);
+            var propInfo = parentType.GetProperty(propertyName);
+            if (propInfo == null)
+                return false;
+            var attributes = propInfo.GetCustomAttributes(typeof(DatastoreNotIndexedAttribute), false);
+            return attributes.Any();
+        }
+
+        private Value SerializeProperty(Type parentType, Type propType, object val)
+        {
+            var isExcludedFromIndex = IsPropertyExcludedFromIndex(parentType, propType.Name);
+            return SerializeProperty(propType, val, isExcludedFromIndex);
         }
 
 
-        // Not sure why Google is using two different (but schematically equivalent) classes
-        private Property ConvertValueToProperty(Value prop)
-        {
-            return new Property
-            {
-                ListValue = prop.ListValue,
-                StringValue = prop.StringValue,
-                IntegerValue = prop.IntegerValue,
-                DoubleValue = prop.DoubleValue,
-                BooleanValue = prop.BooleanValue,
-                BlobKeyValue = prop.BlobKeyValue,
-                BlobValue = prop.BlobValue,
-                DateTimeValue = prop.DateTimeValue,
-                DateTimeValueRaw = prop.DateTimeValueRaw,
-                ETag = prop.ETag,
-                EntityValue = prop.EntityValue,
-                Indexed = prop.Indexed,
-                KeyValue = prop.KeyValue,
-                Meaning = prop.Meaning
-            };
-        }
+        //// Not sure why Google is using two different (but schematically equivalent) classes
+        //private Property ConvertValueToProperty(Value prop)
+        //{
+        //    return new Property
+        //    {
+        //        ListValue = prop.ListValue,
+        //        StringValue = prop.StringValue,
+        //        IntegerValue = prop.IntegerValue,
+        //        DoubleValue = prop.DoubleValue,
+        //        BooleanValue = prop.BooleanValue,
+        //        BlobKeyValue = prop.BlobKeyValue,
+        //        BlobValue = prop.BlobValue,
+        //        DateTimeValue = prop.DateTimeValue,
+        //        DateTimeValueRaw = prop.DateTimeValueRaw,
+        //        ETag = prop.ETag,
+        //        EntityValue = prop.EntityValue,
+        //        Indexed = prop.Indexed,
+        //        KeyValue = prop.KeyValue,
+        //        Meaning = prop.Meaning
+        //    };
+        //}
 
-        private Value ConvertPropertyToValue(Property prop)
-        {
-            return new Value
-            {
-                ListValue = prop.ListValue,
-                StringValue = prop.StringValue,
-                IntegerValue = prop.IntegerValue,
-                DoubleValue = prop.DoubleValue,
-                BooleanValue = prop.BooleanValue,
-                BlobKeyValue = prop.BlobKeyValue,
-                BlobValue = prop.BlobValue,
-                DateTimeValue = prop.DateTimeValue,
-                DateTimeValueRaw = prop.DateTimeValueRaw,
-                ETag = prop.ETag,
-                EntityValue = prop.EntityValue,
-                Indexed = prop.Indexed,
-                KeyValue = prop.KeyValue,
-                Meaning = prop.Meaning
-            };
-        }
+        //private Value ConvertPropertyToValue(Property prop)
+        //{
+        //    return new Value
+        //    {
+        //        ArrayValue = prop.ListValue,
+        //        StringValue = prop.StringValue,
+        //        IntegerValue = prop.IntegerValue,
+        //        DoubleValue = prop.DoubleValue,
+        //        BooleanValue = prop.BooleanValue,
+        //        BlobValue = prop.BlobValue,
+        //        TimestampValue = prop.DateTimeValue,
+        //        ETag = prop.ETag,
+        //        EntityValue = prop.EntityValue,
+        //        ExcludeFromIndexes = prop.Indexed,
+        //        KeyValue = prop.KeyValue,
+        //        Meaning = prop.Meaning
+        //    };
+        //}
 
-        private Property SerializeProperty(Type parentType, Type propType, IList list)
-        {
-            var isIndexed = IsPropertyIndexed(parentType, propType.Name);
+        //private Property SerializeProperty(Type parentType, Type propType, IList list)
+        //{
+        //    var isIndexed = IsPropertyIndexed(parentType, propType.Name);
 
-            var values = new List<Value>();
-            var enumerator = list.GetEnumerator();
-            var genericParamType = TypeSystem.GetElementType(propType);
+        //    var values = new List<Value>();
+        //    var enumerator = list.GetEnumerator();
+        //    var genericParamType = TypeSystem.GetElementType(propType);
 
-            while (enumerator.MoveNext())
-            {
-                values.Add(ConvertPropertyToValue(SerializeProperty(genericParamType, enumerator.Current, isIndexed)));
-            }
+        //    while (enumerator.MoveNext())
+        //    {
+        //        values.Add(ConvertPropertyToValue(SerializeProperty(genericParamType, enumerator.Current, isIndexed)));
+        //    }
 
-            return new Property { ListValue = values, Indexed  = isIndexed };
-        }
+        //    return new Property { ListValue = values, Indexed  = isIndexed };
+        //}
 
-        private Property SerializeFromPropertyInfo(Type parentType, PropertyInfo prop, object entity)
+        private Value SerializeFromPropertyInfo(Type parentType, PropertyInfo prop, object entity)
         {
             var val = prop.GetValue(entity, null);
-            var isIndexed = IsPropertyIndexed(parentType, prop.Name);
-            return SerializeProperty(prop.PropertyType, val, isIndexed);
+            var isExcludedFromIndex = IsPropertyExcludedFromIndex(parentType, prop.Name);
+            return SerializeProperty(prop.PropertyType, val, isExcludedFromIndex);
         }
 
         public Entity SerializeEntity(T entity)
@@ -231,7 +236,7 @@ namespace GoogleAppEngine.Datastore.Serialization
             var datastoreEntity = new Entity();
 
             // Setup properties
-            datastoreEntity.Properties = new Dictionary<string, Property>();
+            datastoreEntity.Properties = new Dictionary<string, Value>();
 
             var properties = entityType.GetProperties(BindingFlags.Instance | BindingFlags.Public);
 
@@ -268,7 +273,7 @@ namespace GoogleAppEngine.Datastore.Serialization
                     else if (gtypedef == typeof(List<>))
                     {
                         var list = (IList)prop.GetValue(entity, null);
-
+                        
                         if (list != null && list.Count > 0)
                             datastoreEntity.Properties.Add(prop.Name, SerializeProperty(entityType, prop.PropertyType, list));
                     }
@@ -325,7 +330,7 @@ namespace GoogleAppEngine.Datastore.Serialization
                             var genericParamType = TypeSystem.GetElementType(property.PropertyType);
                             var list = (IList)property.GetValue(t, null);
 
-                            foreach (var val in kv.Value.ListValue)
+                            foreach (var val in kv.Value.ArrayValue.Values)
                                 list.Add(Convert.ChangeType(GetValueFromProperty(kv.Key, val,
                                     genericParamType), genericParamType));
                         }
@@ -347,17 +352,12 @@ namespace GoogleAppEngine.Datastore.Serialization
             return t;
         }
 
-        private object GetValueFromProperty(KeyValuePair<string, Property> kv, Type type)
+        private object GetValueFromProperty(KeyValuePair<string, Value> kv, Type type)
         {
             return GetValueFromProperty(kv.Key, kv.Value, type);
         }
 
-        private object GetValueFromProperty(string key, Value propValue, Type type)
-        {
-            return GetValueFromProperty(key, ConvertValueToProperty(propValue), type);
-        }
-
-        private object GetValueFromProperty(string key, Property propValue, Type propType)
+        private object GetValueFromProperty(string key, Value propValue, Type propType)
         {
             if (propType == typeof(string))
                 return propValue.StringValue;
@@ -374,7 +374,7 @@ namespace GoogleAppEngine.Datastore.Serialization
             else if (propType == typeof(bool))
                 return propValue.BooleanValue ?? default(bool);
             else if (propType == typeof(DateTime))
-                return propValue.DateTimeValue ?? default(DateTime);
+                return propValue.TimestampValue ?? default(DateTime);
             else if (propType == typeof(byte[]))
                 return string.IsNullOrWhiteSpace(propValue.BlobValue) ? null : Convert.FromBase64String(propValue.BlobValue);
             else if (propType.GetTypeInfo().IsEnum)

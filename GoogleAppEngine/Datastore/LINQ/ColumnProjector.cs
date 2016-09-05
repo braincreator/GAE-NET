@@ -1,13 +1,10 @@
 ﻿// Projector by Matt Warren - MSFT
 // See http://blogs.msdn.com/b/mattwar/archive/2007/08/02/linq-building-an-iqueryable-provider-part-iv.aspx
 
-using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
-using System.Threading.Tasks;
 using GoogleAppEngine.Shared;
 
 namespace GoogleAppEngine.Datastore.LINQ

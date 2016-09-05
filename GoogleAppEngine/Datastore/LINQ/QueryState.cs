@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Threading.Tasks;
 using GoogleAppEngine.Datastore.Indexing;
 
 namespace GoogleAppEngine.Datastore.LINQ
@@ -40,6 +39,16 @@ namespace GoogleAppEngine.Datastore.LINQ
         public PropertyInfo IdField { get; set; }
         public List<KeyValuePair<string, Index.OrderingType>> PropertyOrdering { get; set; }
             = new List<KeyValuePair<string, Index.OrderingType>>();
+
+        public string QueryString
+        {
+            get
+            {
+                var b = QueryBuilder.ToString();
+                b = Parameters.Aggregate(b, (current, p) => current.Replace($"@{p.ParameterName}", p.Value.ToString()));
+                return b;
+            }
+        }
 
         public int BinaryNestingLevel = 0;
 

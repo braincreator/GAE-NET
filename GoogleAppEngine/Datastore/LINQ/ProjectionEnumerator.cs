@@ -1,11 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 using System.Collections;
-using System.Collections.Generic;
 using System.Reflection;
-using Google.Apis.Datastore.v1beta2.Data;
+using System.Threading;
+using System.Threading.Tasks;
+using Google.Apis.Datastore.v1beta3.Data;
 
 namespace GoogleAppEngine.Datastore.LINQ
 {
@@ -28,12 +28,13 @@ namespace GoogleAppEngine.Datastore.LINQ
             return this.GetEnumerator();
         }
 
-        class ProjectionEnumerator : ProjectionRow, IEnumerator<T>, IEnumerator, IDisposable
+        class ProjectionEnumerator : ProjectionRow, IEnumerator<T>, IEnumerator, IDisposable, IAsyncEnumerator<T>
         {
             T _current;
             Func<ProjectionRow, T> _projector;
             Entity _currentEntity;
             IEnumerator<Entity> _entityPropertyEnumerator;
+            IAsyncEnumerator<Entity> _asyncEnumerator; 
 
             internal ProjectionEnumerator(IEnumerable<Entity> entities, Func<ProjectionRow, T> projector)
             {
@@ -71,7 +72,7 @@ namespace GoogleAppEngine.Datastore.LINQ
                         return propValue.IntegerValue ?? default(int);
                     case TypeCode.DateTime:
                         // Google's C# client library has an issue -- it does not deserialize projections correctly, so we have to fix it
-                        return propValue.DateTimeValue ?? deserializeDateTimeProjection(propValue.IntegerValue) ?? default(DateTime);
+                        return propValue.TimestampValue ?? deserializeDateTimeProjection(propValue.IntegerValue) ?? default(DateTime);
                     case TypeCode.String:
                         return propValue.StringValue;
                     case TypeCode.Double:
@@ -83,15 +84,20 @@ namespace GoogleAppEngine.Datastore.LINQ
                 }
             }
 
-            public T Current
+            public async Task<bool> MoveNext(CancellationToken cancellationToken)
             {
-                get { return this._current; }
+                if (await _asyncEnumerator.MoveNext().ConfigureAwait(false))
+                {
+                    this._currentEntity = _asyncEnumerator.Current;
+                    this._current = this._projector(this);
+                    return true;
+                }
+                return false;
             }
 
-            object IEnumerator.Current
-            {
-                get { return this._current; }
-            }
+            public T Current => this._current;
+
+            object IEnumerator.Current => this._current;
 
             public bool MoveNext()
             {

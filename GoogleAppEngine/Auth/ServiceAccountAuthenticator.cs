@@ -1,9 +1,11 @@
 ﻿using System;
 using System.Security.Cryptography.X509Certificates;
-using Google.Apis.Datastore.v1beta2;
+using Google.Apis.Datastore.v1beta3;
+using Google.Apis.Storage.v1.Data;
 using Google.Apis.Services;
-using Google.Apis.Storage.v1;
 using GoogleAppEngine.Shared;
+using GoogleAppEngine.Storage;
+using StorageService = Google.Apis.Storage.v1.StorageService;
 
 namespace GoogleAppEngine
 {
@@ -42,7 +44,7 @@ namespace GoogleAppEngine
                    Scopes = new[]
                    {
                            DatastoreService.Scope.Datastore,
-                           DatastoreService.Scope.UserinfoEmail,
+                           DatastoreService.Scope.CloudPlatform,
                            StorageService.Scope.DevstorageReadWrite
                    }
                }.FromCertificate(certificate));

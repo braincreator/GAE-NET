@@ -1,12 +1,10 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Text;
-using Google.Apis.Datastore.v1beta2.Data;
-using GoogleAppEngine.Datastore.LINQ;
+using Google.Apis.Datastore.v1beta3.Data;
 using GoogleAppEngine.Shared;
+using Org.BouncyCastle.Utilities.Encoders;
 
 namespace GoogleAppEngine.Datastore.LINQ
 {
@@ -412,10 +410,11 @@ namespace GoogleAppEngine.Datastore.LINQ
                 // TODO If this is a key, then we have some extra work to do
                 if (_state.IdField != null &&
                     _state.QueryBuilder.LastOrDefault(x => x.ComponentType == QueryComponentType.MemberName)?.Component == "__key__")
+                    
                     p.Value = $"KEY({typeof (T).Name}, \"{c.Value}\")";
                 else
                     p.Value = c.Value;
-
+                
                 p.TypeCode = c.Value.GetType().GetTypeCode();
 
                 _state.Parameters.Add(p);

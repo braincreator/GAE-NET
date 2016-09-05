@@ -1,9 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
-using Google.Apis.Datastore.v1beta2.Data;
-using GoogleAppEngine.Datastore.LINQ;
+using Google.Apis.Datastore.v1beta3.Data;
 
 namespace GoogleAppEngine.Datastore.Serialization
 {

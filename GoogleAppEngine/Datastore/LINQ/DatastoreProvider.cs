@@ -1,19 +1,14 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Threading;
 using System.Threading.Tasks;
-using Google.Apis.Datastore.v1beta2.Data;
-using GoogleAppEngine.Datastore;
-using GoogleAppEngine.Datastore.Indexing;
-using GoogleAppEngine.Datastore.LINQ;
-using GoogleAppEngine.Datastore.Serialization;
 using GoogleAppEngine.Shared;
 
 namespace GoogleAppEngine.Datastore.LINQ
 {
-    public abstract class DatastoreProvider : IQueryProvider
+    public abstract class DatastoreProvider : IQueryProvider, IAsyncQueryProvider
     {
         protected readonly CloudAuthenticator Authenticator;
         protected readonly DatastoreConfiguration Configuration;
@@ -39,7 +34,6 @@ namespace GoogleAppEngine.Datastore.LINQ
         {
             return new DatastoreQueryable<TS>(this, expression);
         }
-
         IQueryable IQueryProvider.CreateQuery(Expression expression)
         {
             Type elementType = TypeSystem.GetElementType(expression.Type);
@@ -53,18 +47,30 @@ namespace GoogleAppEngine.Datastore.LINQ
             }
         }
 
+        public IAsyncQueryable<TElement> CreateQuery<TElement>(Expression expression)
+        {
+            return new DatastoreQueryable<TElement>(this, expression);
+        }
+        
+        public async Task<TResult> ExecuteAsync<TResult>(Expression expression, CancellationToken token)
+        {
+            var obj = await this.ExecuteAsync(expression,token).ConfigureAwait(false);
+            return (TResult)obj;
+        }
+
         TS IQueryProvider.Execute<TS>(Expression expression)
         {
             return (TS)this.Execute(expression);
         }
-
         object IQueryProvider.Execute(Expression expression)
         {
             return this.Execute(expression);
         }
-        
+
+
         public abstract string GetQueryText(Expression expression);
         public abstract object Execute(Expression expression);
+        public abstract Task<object> ExecuteAsync(Expression expression, CancellationToken token);
         public abstract CloudAuthenticator GetAuthenticator();
         protected abstract void BuildIndex(State state);
     }

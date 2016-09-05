@@ -1,37 +1,97 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using Google.Apis.Datastore.v1beta2.Data;
-using GoogleAppEngine.Datastore;
+using System.Threading;
+using System.Threading.Tasks;
+using Google.Apis.Datastore.v1beta3.Data;
 using GoogleAppEngine.Datastore.Indexing;
-using GoogleAppEngine.Datastore.LINQ;
 using GoogleAppEngine.Datastore.Serialization;
 using GoogleAppEngine.Shared;
 
 
 namespace GoogleAppEngine.Datastore.LINQ
 {
-    public class DatastoreTranslatorProvider<T, TQueryVisitor, TSerializer> : DatastoreProvider 
+    public class DatastoreTranslatorProvider<T, TQueryVisitor, TSerializer> : DatastoreProvider
         where T : new()
-        where TQueryVisitor : IDatastoreQueryVisitor, new ()
+        where TQueryVisitor : IDatastoreQueryVisitor, new()
         where TSerializer : IDatastoreSerializer<T>, new()
     {
         private TQueryVisitor _expvisitor = new TQueryVisitor();
         private TSerializer _serializer = new TSerializer();
 
-        public DatastoreTranslatorProvider(CloudAuthenticator authenticator, DatastoreConfiguration configuration, IIndexContainer indexes) 
+        public DatastoreTranslatorProvider(CloudAuthenticator authenticator, DatastoreConfiguration configuration, IIndexContainer indexes)
             : base(authenticator, configuration, indexes)
         {
         }
 
-        public override CloudAuthenticator GetAuthenticator()
-        {
-            return Authenticator;
-        }
+        //public async override Task<object> ExecuteAsync(Expression expression)
+        //{
+        //    var state = Translate(expression);
+
+        //    // Perform local indexing if needed
+        //    if (Configuration.GenerateIndexYAMLFile)
+        //        BuildIndex(state);
+
+        //    // Build a query
+        //    var datastore = new Google.Apis.Datastore.v1beta3.DatastoreService(Authenticator.GetInitializer());
+        //    var dict = state.Parameters.ToDictionary(x => x.ParameterName, parameter => new GqlQueryParameter()
+        //    {
+        //        Value = ReadQuery_ConvertTypeToValueType(parameter.ParameterName, parameter.Value, parameter.TypeCode)
+        //    });
+        //    var gql = new GqlQuery
+        //    {
+        //        QueryString = state.QueryBuilder.ToString(),
+        //        AllowLiterals = false, // enforce parameterized queries
+        //        NamedBindings = dict
+        //    };
+
+        //    // Grab results
+        //    var result = await datastore.Projects.RunQuery(new RunQueryRequest
+        //    {
+        //        GqlQuery = gql
+        //    }, Authenticator.GetProjectId()).ExecuteAsync().ConfigureAwait(false);
+
+        //    // Project if necessary / Select() method
+        //    if (state.Projector != null)
+        //    {
+        //        var elementType = TypeSystem.GetElementType(expression.Type);
+        //        var projector = state.Projector.Compile();
+
+        //        return Activator.CreateInstance(
+        //            typeof(ProjectionReader<>).MakeGenericType(elementType),
+        //            BindingFlags.Instance | BindingFlags.NonPublic, null,
+        //            new object[] { result.Batch.EntityResults.Select(x => x.Entity), projector },
+        //            null
+        //            );
+        //    }
+
+        //    // First()/Single() method
+        //    if (state.QueryState.HasFlag(QueryState.IsFirst) || state.QueryState.HasFlag(QueryState.IsSingle))
+        //    {
+        //        if (result.Batch.EntityResults.Count == 0 && !state.QueryState.HasFlag(QueryState.AllowFirstSingleOrDefault))
+        //            throw new InvalidOperationException("Sequence contains no elements");
+
+        //        if (result.Batch.EntityResults.Count > 1 && state.QueryState.HasFlag(QueryState.IsSingle))
+        //            throw new InvalidOperationException("Sequence contains more than one element");
+
+        //        if (result.Batch.EntityResults.Any())
+        //            return _serializer.DeserializeEntity(result.Batch.EntityResults[0].Entity);
+
+        //        return null;
+        //    }
+
+        //    // Any() method
+        //    if (state.QueryState.HasFlag(QueryState.IsAny))
+        //        return result.Batch.EntityResults.Any();
+
+        //    // Regular Where() query
+        //    return result.Batch.EntityResults.Select(entityResult => _serializer.DeserializeEntity(entityResult.Entity)).ToList();
+        //}
+
+        public override CloudAuthenticator GetAuthenticator() => Authenticator;
 
         private Expression ReduceExpression(Expression expression)
         {
@@ -54,7 +114,7 @@ namespace GoogleAppEngine.Datastore.LINQ
                 current.Replace(p.ParameterName, p.TypeCode == TypeCode.DateTime ? QueryHelper.NormalizeDatetime((DateTime)p.Value)
                 : Convert.ToString(p.Value)));
         }
-        
+
         private Value ReadQuery_ConvertTypeToValueType(string paramName, object value, TypeCode type)
         {
             switch (type)
@@ -66,7 +126,7 @@ namespace GoogleAppEngine.Datastore.LINQ
                 case TypeCode.Int64:
                     return new Value { IntegerValue = (long)value };
                 case TypeCode.DateTime:
-                    return new Value { DateTimeValue = (DateTime)value };
+                    return new Value { TimestampValue = (DateTime)value };
                 case TypeCode.String:
                     return new Value { StringValue = (string)value ?? "" };
                 case TypeCode.Double:
@@ -78,6 +138,70 @@ namespace GoogleAppEngine.Datastore.LINQ
                     throw new NotSupportedException($"The type of `{paramName}` is not supported.");
             }
         }
+        
+        public override async Task<object> ExecuteAsync(Expression expression, CancellationToken token)
+        {
+            var state = Translate(expression);
+
+            // Perform local indexing if needed
+            if (Configuration.GenerateIndexYAMLFile)
+                BuildIndex(state);
+
+            // Build a query
+            var datastore = new Google.Apis.Datastore.v1beta3.DatastoreService(Authenticator.GetInitializer());
+            var dict = state.Parameters.ToDictionary(x => x.ParameterName, parameter => new GqlQueryParameter()
+            {
+                Value = ReadQuery_ConvertTypeToValueType(parameter.ParameterName, parameter.Value, parameter.TypeCode)
+            });
+            var gql = new GqlQuery
+            {
+                QueryString = state.QueryString,
+                AllowLiterals = true, // enforce parameterized queries
+                NamedBindings = dict
+            };
+
+            // Grab results
+            var result = await datastore.Projects.RunQuery(new RunQueryRequest
+            {
+                GqlQuery = gql
+            }, Authenticator.GetProjectId()).ExecuteAsync(token).ConfigureAwait(false);
+
+            // Project if necessary / Select() method
+            if (state.Projector != null)
+            {
+                var elementType = TypeSystem.GetElementType(expression.Type);
+                var projector = state.Projector.Compile();
+
+                return (T) Activator.CreateInstance(
+                    typeof(ProjectionReader<>).MakeGenericType(elementType),
+                    BindingFlags.Instance | BindingFlags.NonPublic, null,
+                    new object[] { result.Batch.EntityResults.Select(x => x.Entity), projector },
+                    null
+                    );
+            }
+
+            // First()/Single() method
+            if (state.QueryState.HasFlag(QueryState.IsFirst) || state.QueryState.HasFlag(QueryState.IsSingle))
+            {
+                if (result.Batch.EntityResults.Count == 0 && !state.QueryState.HasFlag(QueryState.AllowFirstSingleOrDefault))
+                    throw new InvalidOperationException("Sequence contains no elements");
+
+                if (result.Batch.EntityResults.Count > 1 && state.QueryState.HasFlag(QueryState.IsSingle))
+                    throw new InvalidOperationException("Sequence contains more than one element");
+
+                if (result.Batch.EntityResults.Any())
+                    return _serializer.DeserializeEntity(result.Batch.EntityResults[0].Entity);
+
+                return default(T);
+            }
+
+            // Any() method
+            if (state.QueryState.HasFlag(QueryState.IsAny))
+                return result.Batch.EntityResults.Any();
+
+            // Regular Where() query
+            return result.Batch.EntityResults.Select(entityResult => _serializer.DeserializeEntity(entityResult.Entity)).ToList();
+        }
 
         public override object Execute(Expression expression)
         {
@@ -88,17 +212,23 @@ namespace GoogleAppEngine.Datastore.LINQ
                 BuildIndex(state);
 
             // Build a query
-            var datastore = new Google.Apis.Datastore.v1beta2.DatastoreService(Authenticator.GetInitializer());
-            var gql = new Google.Apis.Datastore.v1beta2.Data.GqlQuery
+            var datastore = new Google.Apis.Datastore.v1beta3.DatastoreService(Authenticator.GetInitializer());
+            var dict = state.Parameters.ToDictionary(x => x.ParameterName, parameter => new GqlQueryParameter()
+            {
+                Value = ReadQuery_ConvertTypeToValueType(parameter.ParameterName, parameter.Value, parameter.TypeCode)
+            });
+            var gql = new GqlQuery
             {
                 QueryString = state.QueryBuilder.ToString(),
-                NameArgs = state.Parameters.Select(x => new GqlQueryArg { Name = x.ParameterName,
-                    Value = ReadQuery_ConvertTypeToValueType(x.ParameterName, x.Value, x.TypeCode) }).ToList(),
-                AllowLiteral = false // enforce parameterized queries
+                AllowLiterals = false, // enforce parameterized queries
+                NamedBindings = dict
+                
+                //NameArgs = state.Parameters.Select(x => new GqlQueryArg { Name = x.ParameterName,
+                //    Value = ReadQuery_ConvertTypeToValueType(x.ParameterName, x.Value, x.TypeCode) }).ToList()
             };
 
             // Grab results
-            var result = datastore.Datasets.RunQuery(new RunQueryRequest
+            var result = datastore.Projects.RunQuery(new RunQueryRequest
             {
                 GqlQuery = gql
             }, Authenticator.GetProjectId()).Execute();
@@ -150,10 +280,10 @@ namespace GoogleAppEngine.Datastore.LINQ
         /// Builds a very basic index configuration in-memory given state.
         /// </summary>
         /// <returns>Contents of the index file.</returns>
-        override protected void BuildIndex(State state)
+        protected override void BuildIndex(State state)
         {
             // Google automatically builds single property indexes
-            if (state.QueryBuilder.Count(x => x.ComponentType == QueryComponentType.MemberName 
+            if (state.QueryBuilder.Count(x => x.ComponentType == QueryComponentType.MemberName
             || (x.ComponentType == QueryComponentType.QueryPartSelectProjection && x.Component != "*")) <= 1)
                 return;
 
